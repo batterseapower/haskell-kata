@@ -421,15 +421,15 @@ instance PurishCategory (PurishWotsit p) where
 -- first :: forall a b. r a b -> (forall c. r (a, c) (b, c))
 -- (***) :: forall a b. r a b -> (forall c d. r c d -> r (a, c) (b, d))
 --
--- pure id                         = id                               -- Functor-identity
--- pure (g . f)                    = pure f >>> pure g                -- Functor-composition
--- first (pure f)                  = pure (f `cross` id)              -- Extension
--- first (f >>> g)                 = first f >>> first g              -- Functor
--- first f >>> pure (id `cross` g) = pure (id `cross` g) >>> first f  -- Exchange
--- first f >>> pure fst            = pure fst >>> f                   -- Unit
--- first (first f) >>> pure assoc  = pure assoc >>> first f           -- Association
+-- arr                            = pureC
+-- first (arr f)                  = arr (f `cross` id)              -- Extension
+-- first (f >>> g)                = first f >>> first g             -- Functor
+-- first f >>> arr (id `cross` g) = arr (id `cross` g) >>> first f  -- Exchange
+-- first f >>> arr fst            = arr fst >>> f                   -- Unit
+-- first (first f) >>> arr assoc  = arr assoc >>> first f           -- Association
 --
 --  where
+---   (>>>) = flip (.)
 --    f `cross` g = \(x, y) -> (f x, g y)
 --    assoc (~(a, b), c) = (a, (b, c))
 --newtype Voldemort r a b = Voldemort { runVoldemort :: forall c. BiYonedaWotsit r (a, c) (b, c) }
@@ -445,9 +445,66 @@ instance Category (Voldemort r) where
     id = Voldemort id
     t1 . t2 = Voldemort (runVoldemort t1 . runVoldemort t2)
 
+instance PurishCategory (Voldemort r) where
+    pureC f = Voldemort (pureC (\(x, y) -> (f x, y)))
+    -- pureC id
+    --   = Voldemort $ pureC (\(x, y) -> (id x, y))
+    --   = Voldemort $ pureC (\(x, y) -> (x, y))
+    --   = Voldemort $ pureC id
+    --   = Voldemort id
+    --   = id
+    --
+    -- pureC f . pureC g
+    --   = Voldemort (runVoldemort (Voldemort (pureC (\(x, y) -> (f x, y)))) . runVoldemort (Voldemort (pureC (\(x, y) -> (g x, y)))))
+    --   = Voldemort ((pureC (\(x, y) -> (f x, y))) . (pureC (\(x, y) -> (g x, y))))
+    --   = Voldemort (pureC ((\(x, y) -> (f x, y)) . (\(x, y) -> (g x, y))))
+    --   = Voldemort (pureC (\(x, y) -> (f (g x), y)))
+    --   = Voldemort (pureC (\(x, y) -> ((f . g) x, y)))
+    --   = pureC (f . g)
+
 instance Arrow (Voldemort r) where
-    arr f = Voldemort $ pureC (\(x, y) -> (f x, y))
-    first (t1 :: Voldemort r a b) = Voldemort (pureC (\(~(a, c), d) -> (a, (c, d))) >>> runVoldemort t1 >>> pureC (\(b, ~(c, d)) -> ((b, c), d)))
+    arr = pureC
+    first t1 = Voldemort (pureC assoc >>> runVoldemort t1 >>> pureC reassoc)
+      where assoc   (~(a, c), d) = (a, (c, d))
+            reassoc (b, ~(c, d)) = ((b, c), d)
+    -- first (arr f)
+    --   = Voldemort (pureC assoc >>> runVoldemort (Voldemort (pureC (\(x, y) -> (f x, y)))) >>> pureC reassoc)
+    --   = Voldemort (pureC assoc >>> pureC (\(x, y) -> (f x, y)) >>> pureC reassoc)
+    --   = Voldemort (pureC (reassoc . (\(x, y) -> (f x, y)) . assoc))
+    --   = Voldemort (pureC (\(~(a, c), d) -> ((f a, c), d)))
+    --   = Voldemort (pureC (\(~(a, c), d) -> ((f a, id c), d)))
+    --   = Voldemort (pureC (\(~(a, c), d) -> ((f `cross` id) (a, c), d)))
+    --   = Voldemort (pureC (\(x, d) -> ((f `cross` id) x, d)))
+    --   = pureC (f `cross` id)
+    --
+    -- first (f >>> g)
+    --   = Voldemort (pureC assoc >>> runVoldemort (Voldemort (runVoldemort g . runVoldemort f)) >>> pureC reassoc)
+    --   = Voldemort (pureC assoc >>> (runVoldemort g . runVoldemort f) >>> pureC reassoc)
+    --   = Voldemort (pureC reassoc . runVoldemort g . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC reassoc . runVoldemort g . id . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC reassoc . runVoldemort g . pureC id . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC reassoc . runVoldemort g . pureC (assoc . reassoc) . runVoldemort f . pureC assoc)
+    --   = Voldemort ((pureC reassoc . runVoldemort g . pureC assoc) . (pureC reassoc . runVoldemort f . pureC assoc))
+    --   = Voldemort ((pureC assoc >>> runVoldemort g >>> pureC reassoc) . (pureC assoc >>> runVoldemort f >>> pureC reassoc))
+    --   = Voldemort (runVoldemort (Voldemort (pureC assoc >>> runVoldemort g >>> pureC reassoc)) . runVoldemort (Voldemort (pureC assoc >>> runVoldemort f >>> pureC reassoc)))
+    --   = first f >>> first g
+    --
+    -- first f >>> arr (id `cross` g)
+    --   = Voldemort (runVoldemort (Voldemort (pureC (\(x, y) -> ((id `cross` g) x, y)))) . runVoldemort (Voldemort (pureC assoc >>> runVoldemort f >>> pureC reassoc)))
+    --   = Voldemort ((pureC (\(x, y) -> ((id `cross` g) x, y))) . (pureC assoc >>> runVoldemort f >>> pureC reassoc))
+    --   = Voldemort (pureC (\(x, y) -> ((id `cross` g) x, y)) . pureC reassoc . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC ((\(x, y) -> ((id `cross` g) x, y)) . reassoc) . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC (\(b, ~(c, d)) -> (((id `cross` g) (b, c), d))) . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC (\(b, ~(c, d)) -> (((id b, g c), d))) . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC (\(b, ~(c, d)) -> (((b, g c), d))) . runVoldemort f . pureC assoc)
+    --
+    --   = Voldemort (pureC reassoc . runVoldemort f . pureC (\(~(a, c), d) -> (a, (g c, d))))
+    --   = Voldemort (pureC reassoc . runVoldemort f . pureC (assoc . (\(~(a, c), d) -> ((id a, g c), d))))
+    --   = Voldemort (pureC reassoc . runVoldemort f . pureC (assoc . (\(x, y) -> ((id `cross` g) x, y))))
+    --   = Voldemort (pureC reassoc . runVoldemort f . pureC assoc . pureC (\(x, y) -> ((id `cross` g) x, y)))
+    --   = Voldemort ((pureC assoc >>> runVoldemort f >>> pureC reassoc) . (pureC (\(x, y) -> ((id `cross` g) x, y))))
+    --   = Voldemort (runVoldemort (Voldemort (pureC assoc >>> runVoldemort f >>> pureC reassoc)) . runVoldemort (Voldemort (pureC (\(x, y) -> ((id `cross` g) x, y)))))
+    --   = arr (id `cross` g) >>> first f
 
 
 -- Codensity is the "mother of all monads":
