@@ -64,6 +64,7 @@ liftThingy i = Thingy (liftYoneda . (<**>) i . lowerYoneda)
 lowerThingy :: Applicative i => Thingy i a -> i a
 lowerThingy i = lowerYoneda $ runThingy i (liftYoneda (pure id))
 
+
 instance Functor (Thingy i) where
     fmap f m = Thingy $ runThingy m . fmap (. f)
     -- fmap id m
@@ -83,8 +84,10 @@ instance Functor (Thingy i) where
     --   = fmap (f . g) m
 
 instance Applicative (Thingy i) where
-    pure x = Thingy $ \m -> Yoneda (\k -> runYoneda m (k . ($ x)))
-    mf <*> mx = Thingy $ \m -> runThingy mx (runThingy mf (Yoneda (\k -> runYoneda m (k . (.)))))
+    --pure x = Thingy $ \m -> Yoneda (\k -> runYoneda m (k . ($ x)))
+    --mf <*> mx = Thingy $ \m -> runThingy mx (runThingy mf (Yoneda (\k -> runYoneda m (k . (.)))))
+    pure x = Thingy $ \m -> fmap ($ x) m
+    mf <*> mx = Thingy $ \m -> runThingy mx (runThingy mf (fmap (.) m))
     -- pure f <*> pure x
     --   = Thingy (\m -> runThingy (pure x) (runThingy (pure f) (Yoneda (\k -> runYoneda m (k . (.))))))
     --   = Thingy (\m -> runThingy (Thingy (\m -> Yoneda (\k -> runYoneda m (k . ($ x))))) (runThingy (Thingy (\m -> Yoneda (\k -> runYoneda m (k . ($ f))))) (Yoneda (\k -> runYoneda m (k . (.))))))
@@ -117,6 +120,14 @@ instance Applicative (Thingy i) where
     --    = Thingy (\m -> runThingy (Thingy (\m -> Yoneda (\k -> runYoneda m (k . ($ y))))) (runThingy u (Yoneda (\k -> runYoneda m (k . (.))))))
     --    = Thingy (\m -> runThingy (pure y) (runThingy u (Yoneda (\k -> runYoneda m (k . (.))))))
     --    = u <*> pure y
+    --
+    -- pure ($ y) <*> u
+    --   = Thingy (\m -> runThingy u (runThingy (Thingy (\m -> fmap ($ y) m)) (fmap (.) m)))
+    --   = Thingy (\m -> runThingy u (fmap ($ y) (fmap (.) m)))
+    --   ??? free theorem
+    --   = Thingy (\m -> fmap ($ y) (runThingy u (fmap (.) m)))
+    --   = Thingy (\m -> runThingy (Thingy (\m -> fmap ($ y) m)) (runThingy u (fmap (.) m)))
+    --   = u <*> pure y
 
 -- Wotsit is the "mother of all categories":
 
@@ -140,6 +151,24 @@ instance Category (Wotsit t) where
     -- can't get access to this paper electronically)
     id = Wotsit id
     t1 . t2 = Wotsit (runWotsit t2 . runWotsit t1)
+    -- id . t
+    --   = Wotsit (runWotsit t . runWotsit (Wotsit id))
+    --   = Wotsit (runWotsit t . id)
+    --   = Wotsit (runWotsit t)
+    --   = t
+    --
+    -- t . id
+    --   = Wotsit (runWotsit (Wotsit id) . runWotsit t)
+    --   = Wotsit (id . runWotsit t)
+    --   = Wotsit (runWotsit t)
+    --   = t
+    --
+    -- t . (r . s)
+    --   = Wotsit (runWotsit (Wotsit (runWotsit s . runWotsit r)) . runWotsit t)
+    --   = Wotsit ((runWotsit s . runWotsit r) . runWotsit t)
+    --   = Wotsit (runWotsit s . (runWotsit r . runWotsit t))
+    --   = Wotsit (runWotsit s . runWotsit (Wotsit (runWotsit r . runWotsit t)))
+    --   = (t . r) . s
 
 -- Demonstrate that we can hoist stronger operations into Wotsit as well, given a type class context
 instance Arrow t => Arrow (Wotsit t) where
@@ -185,12 +214,21 @@ instance Bifunctor (BiYoneda u) where
 
 -- ContraYoneda1 is the "mother of all ContraFunctor1"
 
--- Satisfies obvious laws
+-- contrafmap1 id x = x
+-- contrafmap1 f (contrafmap1 g x) = contrafmap1 (g . f) x
 class ContraFunctor1 u where
     contrafmap1 :: (a -> b) -> u b c -> u a c
 
 instance ContraFunctor1 (->) where
     contrafmap1 f h = h . f
+    -- contrafmap1 id x
+    --   = x . id
+    --   = x
+    --
+    -- contrafmap1 f (contrafmap1 g x)
+    --   = (x . g) . f
+    --   = x . (g . f)
+    --   = contrafmap1 (g . f) x
 
 -- Every arrow is a ContraFunctor1:
 instance Arrow u => ContraFunctor1 u where
@@ -210,12 +248,42 @@ lowerContraYoneda1 u = runContraYoneda1 u id
 
 instance ContraFunctor1 (ContraYoneda1 u) where
     contrafmap1 f u = ContraYoneda1 (\f' -> runContraYoneda1 u (f . f'))
+    -- contrafmap1 id x
+    --  = ContraYoneda1 (\f' -> runContraYoneda1 x (id . f'))
+    --  = ContraYoneda1 (\f' -> runContraYoneda1 x f')
+    --  = x
+    --
+    -- contrafmap1 f (contrafmap1 g x)
+    --   = ContraYoneda1 (\f' -> runContraYoneda1 (ContraYoneda1 (\f' -> runContraYoneda1 x (g . f'))) (f . f'))
+    --   = ContraYoneda1 (\f' -> runContraYoneda1 x (g . (f . f')))
+    --   = ContraYoneda1 (\f' -> runContraYoneda1 x ((g . f) . f'))
+    --   = contrafmap1 (g . f) x
 
 -- FIXME: a bit funny. Why do I require such a strong superclass constraint?
 -- I only need this for (lift/lower)ContraYoneda1Wotsit though, so not a big deal.
 instance ContraFunctor1Category u => Category (ContraYoneda1 u) where
-    id = ContraYoneda1 (\(k :: d -> a) -> contrafmap1 k id :: u d a) :: ContraYoneda1 u a a
-    (u1 :: ContraYoneda1 u b c) . (u2 :: ContraYoneda1 u a b) = ContraYoneda1 (\(k :: d -> a) -> runContraYoneda1 u1 id . runContraYoneda1 u2 k :: u d c)
+    id = ContraYoneda1 (\k -> contrafmap1 k id)
+    u1 . u2 = ContraYoneda1 (\k -> runContraYoneda1 u1 id . runContraYoneda1 u2 k)
+    -- id . u
+    --   = ContraYoneda1 (\k -> runContraYoneda1 (ContraYoneda1 (\k -> contrafmap1 k id)) id . runContraYoneda1 u k)
+    --   = ContraYoneda1 (\k -> contrafmap1 id id . runContraYoneda1 u k)
+    --   = ContraYoneda1 (\k -> id . runContraYoneda1 u k)
+    --   = ContraYoneda1 (\k -> runContraYoneda1 u k)
+    --   = u
+    --
+    -- u . id
+    --   = ContraYoneda1 (\k -> runContraYoneda1 u id . runContraYoneda1 (ContraYoneda1 (\k -> contrafmap1 k id)) k)
+    --   = ContraYoneda1 (\k -> runContraYoneda1 u id . contrafmap1 k id)
+    --
+    --   = ContraYoneda1 (\k -> runContraYoneda1 u k)
+    --   = u
+    --
+    -- u1 . (u2 . u3)
+    --   = ContraYoneda1 (\k -> runContraYoneda1 u1 id . runContraYoneda1 (ContraYoneda1 (\k -> runContraYoneda1 u2 id . runContraYoneda1 u3 k)) k)
+    --   = ContraYoneda1 (\k -> runContraYoneda1 u1 id . (runContraYoneda1 u2 id . runContraYoneda1 u3 k))
+    --   = ContraYoneda1 (\k -> (runContraYoneda1 u1 id . runContraYoneda1 u2 id) . runContraYoneda1 u3 k)
+    --   = ContraYoneda1 (\k -> runContraYoneda1 (ContraYoneda1 (\k -> runContraYoneda1 u1 id . runContraYoneda1 u2 k)) id . runContraYoneda1 u3 k)
+    --   = (u1 . u2) . u3
 
 -- BiYonedaWotsit is the "mother of all BifunctorCategories"
 -- NB: might be nicer to formulate this in terms of pureA rather than bimap
@@ -331,7 +399,23 @@ instance Applicative (Codensity f) where
 
 instance Monad (Codensity f) where
     return x = Codensity (\k -> k x)
-    m >>= k = Codensity (\c -> runCodensity m (\a -> runCodensity (k a) c))
+    m >>= f = Codensity (\c -> runCodensity m (\a -> runCodensity (f a) c))
+    -- return a >>= f
+    --   = Codensity (\c -> runCodensity (Codensity (\k -> k a)) (\a -> runCodensity (f a) c))
+    --   = Codensity (\c -> runCodensity (f a) c)
+    --   = f a
+    --
+    -- m >>= return
+    --   = Codensity (\c -> runCodensity m (\a -> runCodensity (Codensity (\k -> k x)) c))
+    --   = Codensity (\c -> runCodensity m (\a -> c a))
+    --   = m
+    --
+    -- ((m >>= f) >>= g)
+    --   = Codensity (\c -> runCodensity (Codensity (\c -> runCodensity m (\a -> runCodensity (f a) c))) (\a -> runCodensity (g a) c))
+    --   = Codensity (\c -> runCodensity m (\a -> runCodensity (f a) (\a -> runCodensity (g a) c)))
+    --   = Codensity (\c -> runCodensity m (\a -> runCodensity (Codensity (\c -> runCodensity (f a) (\a -> runCodensity (g a) c))) c))
+    --   = Codensity (\c -> runCodensity m (\a -> runCodensity (f a >>= g) c))
+    --   = m >>= (\x -> f x >>= g)
 
 
 -- CodensityPlus is the "mother of all MonadPlus"
@@ -339,30 +423,65 @@ instance Monad (Codensity f) where
 -- mzero :: forall a. m a
 -- mplus :: forall a. m a -> m a -> m a
 --
--- mzero >>= f         = mzero                -- Left-zero
--- v >>= (\_ -> mzero) = mzero                -- Right-zero
--- mplus mzero m       = m                    -- Left-identity
--- mplus m mzero       = m                    -- Right-identity
--- mplus m (mplus n o) = mplus (mplus m n) o  -- Associativity
-newtype CodensityPlus p a = CodensityPlus { runCodensityPlus :: forall b. p b -> (a -> p b) -> p b }
+-- mzero >>= f         = mzero                 -- Left-zero
+-- v >>= (\_ -> mzero) = mzero                 -- Right-zero
+-- mplus mzero m       = m                     -- Left-identity
+-- mplus m mzero       = m                     -- Right-identity
+-- mplus m (mplus n o) = mplus (mplus m n) o   -- Associativity
+-- mplus m n >>= o = mplus (m >>= o) (n >>= o) -- Distributivity
+newtype CodensityPlus p a = CodensityPlus { runCodensityPlus :: forall b. (a -> p b -> p b) -> p b -> p b }
 
 liftCodensityPlus :: MonadPlus p => p a -> CodensityPlus p a
-liftCodensityPlus m = CodensityPlus (\mfai fmsuc -> (m >>= fmsuc) `mplus` mfai)
+liftCodensityPlus m = CodensityPlus (\fmsuc mfai -> m >>= (\x -> fmsuc x mfai))
 
 lowerCodensityPlus :: MonadPlus p => CodensityPlus p a -> p a
-lowerCodensityPlus m = runCodensityPlus m mzero return
+lowerCodensityPlus m = runCodensityPlus m (\x mx -> return x `mplus` mx) mzero
 
 instance Functor (CodensityPlus p) where
-    fmap (f :: a -> b) (m :: CodensityPlus p a) = CodensityPlus (\mfai fmsuc -> runCodensityPlus m mfai (fmsuc . f))
+    fmap f m = CodensityPlus (\fmsuc mfai -> runCodensityPlus m (fmsuc . f) mfai)
 
 instance Monad (CodensityPlus p) where
-    return x = CodensityPlus (\_mfai fmsuc -> fmsuc x)
-    mx >>= fxmy = CodensityPlus (\mfai fmsuc -> runCodensityPlus mx mfai (\x -> runCodensityPlus (fxmy x) mfai fmsuc))
+    return x = CodensityPlus (\fmsuc mfai -> fmsuc x mfai)
+    mx >>= fxmy = CodensityPlus (\fmsuc mfai -> runCodensityPlus mx (\x mfai -> runCodensityPlus (fxmy x) fmsuc mfai) mfai)
 
 instance MonadPlus (CodensityPlus p) where
-    mzero = CodensityPlus (\mfai _fmsuc -> mfai)
-    m1 `mplus` m2 = CodensityPlus (\mfai msuc -> runCodensityPlus m1 (runCodensityPlus m2 mfai msuc) msuc)
-
+    mzero = CodensityPlus (\_fmsuc mfai -> mfai)
+    m1 `mplus` m2 = CodensityPlus (\fmsuc mfai -> runCodensityPlus m1 fmsuc (runCodensityPlus m2 fmsuc mfai))
+    -- mzero >>= f
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus (CodensityPlus (\_fmsuc mfai -> mfai)) (\x mfai -> runCodensityPlus (f x) fmsuc mfai) mfai)
+    --   = CodensityPlus (\fmsuc mfai -> mfai)
+    --   = mzero
+    --
+    -- v >>= (\_ -> mzero)
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus v (\x mfai -> runCodensityPlus ((\_ -> mzero) x) fmsuc mfai) mfai)
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus v (\x mfai -> runCodensityPlus (CodensityPlus (\_fmsuc mfai -> mfai)) fmsuc mfai) mfai)
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus v (\x mfai -> mfai) mfai)
+    --   ???? parametricity
+    --   = CodensityPlus (\_fmsuc mfai -> mfai)
+    --   = mzero
+    --
+    -- mplus mzero m
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus (CodensityPlus (\_fmsuc mfai -> mfai)) fmsuc (runCodensityPlus m fmsuc mfai))
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus m fmsuc mfai)
+    --   = m
+    --
+    -- mplus m mzero
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus m fmsuc (runCodensityPlus (CodensityPlus (\_fmsuc mfai -> mfai)) fmsuc mfai))
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus m fmsuc mfai)
+    --   = m
+    --
+    -- mplus m (mplus n o)
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus m fmsuc (runCodensityPlus (CodensityPlus (\fmsuc mfai -> runCodensityPlus n fmsuc (runCodensityPlus o fmsuc mfai))) fmsuc mfai))
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus m fmsuc (runCodensityPlus n fmsuc (runCodensityPlus o fmsuc mfai)))
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus (CodensityPlus (\fmsuc mfai -> runCodensityPlus m fmsuc (runCodensityPlus n fmsuc mfai))) fmsuc (runCodensityPlus o fmsuc mfai))
+    --   = mplus (mplus m n) o
+    --
+    -- mplus m n >>= o
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus (CodensityPlus (\fmsuc mfai -> runCodensityPlus m fmsuc (runCodensityPlus n fmsuc mfai))) (\x mfai -> runCodensityPlus (o x) fmsuc mfai) mfai)
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus m (\x mfai -> runCodensityPlus (o x) fmsuc mfai) (runCodensityPlus n (\x mfai -> runCodensityPlus (o x) fmsuc mfai) mfai))
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus (CodensityPlus (\fmsuc mfai -> runCodensityPlus m (\x mfai -> runCodensityPlus (o x) fmsuc mfai) mfai)) fmsuc (runCodensityPlus (CodensityPlus (\fmsuc mfai -> runCodensityPlus n (\x mfai -> runCodensityPlus (o x) fmsuc mfai) mfai)) fmsuc mfai))
+    --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus (m >>= o) fmsuc (runCodensityPlus (n >>= o) fmsuc mfai))
+    --   = mplus (m >>= o) (n >>= o)
 
 main :: IO ()
 main = return ()
