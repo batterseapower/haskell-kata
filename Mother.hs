@@ -334,7 +334,7 @@ instance Monad (Codensity f) where
     m >>= k = Codensity (\c -> runCodensity m (\a -> runCodensity (k a) c))
 
 
--- Addity is the "mother of all MonadPlus"
+-- CodensityPlus is the "mother of all MonadPlus"
 
 -- mzero :: forall a. m a
 -- mplus :: forall a. m a -> m a -> m a
@@ -344,16 +344,24 @@ instance Monad (Codensity f) where
 -- mplus mzero m       = m                    -- Left-identity
 -- mplus m mzero       = m                    -- Right-identity
 -- mplus m (mplus n o) = mplus (mplus m n) o  -- Associativity
-newtype Addity p a = Addity { runAddity :: Codensity p a -> Codensity p a }
+newtype CodensityPlus p a = CodensityPlus { runCodensityPlus :: forall b. p b -> (a -> p b) -> p b }
 
-liftAddity :: MonadPlus p => p a -> Addity p a
-liftAddity m = Addity (liftCodensity . mplus m . lowerCodensity)
+liftCodensityPlus :: MonadPlus p => p a -> CodensityPlus p a
+liftCodensityPlus m = CodensityPlus (\mfai fmsuc -> (m >>= fmsuc) `mplus` mfai)
 
-lowerAddity :: MonadPlus p => Addity p a -> p a
-lowerAddity m = lowerCodensity (runAddity m (liftCodensity mzero))
+lowerCodensityPlus :: MonadPlus p => CodensityPlus p a -> p a
+lowerCodensityPlus m = runCodensityPlus m mzero return
 
--- instance Functor (Addity m) where
---     fmap (f :: a -> b) (m :: Addity m a) = Addity (\k -> fmap f (runAddity m k))
+instance Functor (CodensityPlus p) where
+    fmap (f :: a -> b) (m :: CodensityPlus p a) = CodensityPlus (\mfai fmsuc -> runCodensityPlus m mfai (fmsuc . f))
+
+instance Monad (CodensityPlus p) where
+    return x = CodensityPlus (\_mfai fmsuc -> fmsuc x)
+    mx >>= fxmy = CodensityPlus (\mfai fmsuc -> runCodensityPlus mx mfai (\x -> runCodensityPlus (fxmy x) mfai fmsuc))
+
+instance MonadPlus (CodensityPlus p) where
+    mzero = CodensityPlus (\mfai _fmsuc -> mfai)
+    m1 `mplus` m2 = CodensityPlus (\mfai msuc -> runCodensityPlus m1 (runCodensityPlus m2 mfai msuc) msuc)
 
 
 main :: IO ()
