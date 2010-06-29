@@ -92,7 +92,8 @@ non_normaliseds = [
     -- Homomorphism
     Pure "f" `Ap` Pure "x",
     -- Interchange
-    Foreign "launchMissiles" `Ap` Pure "1337"
+    Foreign "launchMissiles" `Ap` Pure "1337",
+    Pure "($ 1337)" `Ap` Foreign "launchMissiles"
   ]
 
 main = forM_ non_normaliseds $ \non_normalised -> do
