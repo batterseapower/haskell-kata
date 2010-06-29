@@ -312,12 +312,18 @@ instance BifunctorCategory (BiYonedaWotsit u) where
 
 -- ContraYoneda1Wotsit is the "mother of all ContraFunctor1Categories"
 
+-- contrafmap1 id id                   = id
+-- contrafmap1 f (u1 . u2)             = u1 . contrafmap1 f u2   ???
+-- contrafmap1 f id . contrafmap1 g id = contrafmap1 (g . f) id
+--    == OR ==
+-- pureA1 id           = id
+-- pureA1 f . pureA1 g = pureA1 (f . g)
 class (ContraFunctor1 u, Category u) => ContraFunctor1Category u where
+    pureA1 :: (a -> b) -> u a b
+    pureA1 f = contrafmap1 f id
 
 instance Arrow u => ContraFunctor1Category u where
 
-pureA1 :: ContraFunctor1Category u => (a -> b) -> u a b
-pureA1 f = contrafmap1 f id
 
 newtype ContraYoneda1Wotsit u a b = ContraYoneda1Wotsit { runContraYoneda1Wotsit :: Wotsit (ContraYoneda1 u) a b }
 
@@ -328,14 +334,84 @@ lowerContraYoneda1Wotsit :: ContraFunctor1Category u => ContraYoneda1Wotsit u a 
 lowerContraYoneda1Wotsit u = lowerContraYoneda1 (lowerWotsit (runContraYoneda1Wotsit u))
 
 instance ContraFunctor1 (ContraYoneda1Wotsit u) where
-    --bimap f g u = BiYonedaWotsit (bimap f g (runBiYonedaWotsit u))
     contrafmap1 f u = ContraYoneda1Wotsit (Wotsit (\k -> contrafmap1 f (runWotsit (runContraYoneda1Wotsit u) k)))
 
 instance Category (ContraYoneda1Wotsit u) where
     id = ContraYoneda1Wotsit id
     u1 . u2 = ContraYoneda1Wotsit (runContraYoneda1Wotsit u1 . runContraYoneda1Wotsit u2)
+    -- id . u
+    --   = ContraYoneda1Wotsit (runContraYoneda1Wotsit (ContraYoneda1Wotsit id) . runContraYoneda1Wotsit u)
+    --   = ContraYoneda1Wotsit (id . runContraYoneda1Wotsit u)
+    --   = ContraYoneda1Wotsit (runContraYoneda1Wotsit u)
+    --   = u
+    --
+    -- u . id
+    --   = ContraYoneda1Wotsit (runContraYoneda1Wotsit u . runContraYoneda1Wotsit (ContraYoneda1Wotsit id))
+    --   = ContraYoneda1Wotsit (runContraYoneda1Wotsit u . id)
+    --   = ContraYoneda1Wotsit (runContraYoneda1Wotsit u)
+    --   = u
+    --
+    -- u1 . (u2 . u3)
+    --   = ContraYoneda1Wotsit (runContraYoneda1Wotsit u1 . runContraYoneda1Wotsit (ContraYoneda1Wotsit (runContraYoneda1Wotsit u2 . runContraYoneda1Wotsit u3)))
+    --   = ContraYoneda1Wotsit (runContraYoneda1Wotsit u1 . (runContraYoneda1Wotsit u2 . runContraYoneda1Wotsit u3))
+    --   = ContraYoneda1Wotsit ((runContraYoneda1Wotsit u1 . runContraYoneda1Wotsit u2) . runContraYoneda1Wotsit u3)
+    --   = ContraYoneda1Wotsit (runContraYoneda1Wotsit (ContraYoneda1Wotsit (runContraYoneda1Wotsit u1 . runContraYoneda1Wotsit u2)) . runContraYoneda1Wotsit u3)
+    --   = (u1 . u2) . u3
 
 instance ContraFunctor1Category (ContraYoneda1Wotsit u) where
+
+
+-- pureC id          = id
+-- pureC f . pureC g = pureC (f . g)
+class Category p => PurishCategory p where
+    pureC :: (a -> b) -> p a b
+
+instance Arrow a => PurishCategory a where
+    pureC = arr
+
+newtype PurishWotsit p a b = PurishWotsit { runPurishWotsit :: forall c. (forall d. (d -> b) -> p d c) -> (forall e. (e -> a) -> p e c) }
+
+liftPurishWotsit :: PurishCategory p => p a b -> PurishWotsit p a b
+liftPurishWotsit p = PurishWotsit (\k k' -> pureC k' >>> p >>> k id)
+
+lowerPurishWotsit :: PurishCategory p => PurishWotsit p a b -> p a b
+lowerPurishWotsit p = runPurishWotsit p pureC id
+
+instance Category (PurishWotsit p) where
+    id = PurishWotsit (\k k' -> k k')
+    p1 . p2 = PurishWotsit (runPurishWotsit p2 . runPurishWotsit p1)
+    -- id . p
+    --   = PurishWotsit (runPurishWotsit p . runPurishWotsit (PurishWotsit (\k k' -> k k')))
+    --   = PurishWotsit (runPurishWotsit p . (\k k' -> k k'))
+    --   = PurishWotsit (runPurishWotsit p)
+    --   = p
+    --
+    -- p . id
+    --   = PurishWotsit (runPurishWotsit (PurishWotsit (\k k' -> k k')) . runPurishWotsit p)
+    --   = PurishWotsit ((\k k' -> k k') . runPurishWotsit p)
+    --   = PurishWotsit (runPurishWotsit p)
+    --   = p
+    --
+    -- p1 . (p2 . p3)
+    --   = PurishWotsit (runPurishWotsit (PurishWotsit (runPurishWotsit p3 . runPurishWotsit p2)) . runPurishWotsit p1)
+    --   = PurishWotsit ((runPurishWotsit p3 . runPurishWotsit p2) . runPurishWotsit p1)
+    --   = PurishWotsit (runPurishWotsit p3 . (runPurishWotsit p2 . runPurishWotsit p1))
+    --   = PurishWotsit (runPurishWotsit p3 . runPurishWotsit (PurishWotsit (runPurishWotsit p2 . runPurishWotsit p1)))
+    --   = (p1 . p2) . p3
+
+instance PurishCategory (PurishWotsit p) where
+    pureC x = PurishWotsit (\k k' -> k (x . k'))
+    -- pureC id
+    --   = PurishWotsit (\k k' -> k (id . k'))
+    --   = PurishWotsit (\k k' -> k k')
+    --   = id
+    --
+    -- pureC f . pureC g
+    --   = PurishWotsit (runPurishWotsit (PurishWotsit (\k k' -> k (g . k'))) . runPurishWotsit (PurishWotsit (\k k' -> k (f . k'))))
+    --   = PurishWotsit ((\k k' -> k (g . k')) . (\k k' -> k (f . k')))
+    --   = PurishWotsit (\k k' -> k (\l -> f (g (k' l))))
+    --   = PurishWotsit (\k k' -> k ((f . g) . k'))
+    --   = pureC (f . g)
 
 
 -- Voldemort is the "mother of all arrows":
@@ -357,21 +433,21 @@ instance ContraFunctor1Category (ContraYoneda1Wotsit u) where
 --    f `cross` g = \(x, y) -> (f x, g y)
 --    assoc (~(a, b), c) = (a, (b, c))
 --newtype Voldemort r a b = Voldemort { runVoldemort :: forall c. BiYonedaWotsit r (a, c) (b, c) }
-newtype Voldemort r a b = Voldemort { runVoldemort :: forall c. ContraYoneda1Wotsit r (a, c) (b, c) }
+newtype Voldemort r a b = Voldemort { runVoldemort :: forall c. PurishWotsit r (a, c) (b, c) }
 
 liftVoldemort :: Arrow r => r a b -> Voldemort r a b
-liftVoldemort r = Voldemort (liftContraYoneda1Wotsit (first r))
+liftVoldemort r = Voldemort (liftPurishWotsit (first r))
 
 lowerVoldemort :: Arrow r => Voldemort r a b -> r a b
-lowerVoldemort (r :: Voldemort r a b) = arr (\x -> (x, ())) >>> lowerContraYoneda1Wotsit (runVoldemort r) >>> arr (\(x, ()) -> x)
+lowerVoldemort (r :: Voldemort r a b) = arr (\x -> (x, ())) >>> lowerPurishWotsit (runVoldemort r) >>> arr (\(x, ()) -> x)
 
 instance Category (Voldemort r) where
     id = Voldemort id
     t1 . t2 = Voldemort (runVoldemort t1 . runVoldemort t2)
 
 instance Arrow (Voldemort r) where
-    arr f = Voldemort $ pureA1 (\(x, y) -> (f x, y))
-    first (t1 :: Voldemort r a b) = Voldemort (pureA1 (\(~(a, c), d) -> (a, (c, d))) >>> runVoldemort t1 >>> pureA1 (\(b, ~(c, d)) -> ((b, c), d)))
+    arr f = Voldemort $ pureC (\(x, y) -> (f x, y))
+    first (t1 :: Voldemort r a b) = Voldemort (pureC (\(~(a, c), d) -> (a, (c, d))) >>> runVoldemort t1 >>> pureC (\(b, ~(c, d)) -> ((b, c), d)))
 
 
 -- Codensity is the "mother of all monads":
