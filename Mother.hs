@@ -5,6 +5,7 @@ import Prelude hiding (id, (.))
 import Control.Applicative
 import Control.Arrow
 import Control.Category
+import Control.Monad
 
 
 -- Yoneda is the "mother of all functors":
@@ -181,6 +182,41 @@ lowerBiYoneda u = runBiYoneda u id id
 instance Bifunctor (BiYoneda u) where
     bimap f g u = BiYoneda (\f' g' -> runBiYoneda u (f . f') (g' . g))
 
+
+-- ContraYoneda1 is the "mother of all ContraFunctor1"
+
+-- Satisfies obvious laws
+class ContraFunctor1 u where
+    contrafmap1 :: (a -> b) -> u b c -> u a c
+
+instance ContraFunctor1 (->) where
+    contrafmap1 f h = h . f
+
+-- Every arrow is a ContraFunctor1:
+instance Arrow u => ContraFunctor1 u where
+   contrafmap1 = arrowContrafmap1
+
+arrowContrafmap1 :: Arrow r => (a -> b) -> r b c -> r a c
+arrowContrafmap1 f u = arr f >>> u
+
+
+newtype ContraYoneda1 u b c = ContraYoneda1 { runContraYoneda1 :: forall a. (a -> b) -> u a c }
+
+liftContraYoneda1 :: ContraFunctor1 u => u a b -> ContraYoneda1 u a b
+liftContraYoneda1 u = ContraYoneda1 (\f' -> contrafmap1 f' u)
+
+lowerContraYoneda1 :: ContraYoneda1 u a b -> u a b
+lowerContraYoneda1 u = runContraYoneda1 u id
+
+instance ContraFunctor1 (ContraYoneda1 u) where
+    contrafmap1 f u = ContraYoneda1 (\f' -> runContraYoneda1 u (f . f'))
+
+-- FIXME: a bit funny. Why do I require such a strong superclass constraint?
+-- I only need this for (lift/lower)ContraYoneda1Wotsit though, so not a big deal.
+instance ContraFunctor1Category u => Category (ContraYoneda1 u) where
+    id = ContraYoneda1 (\(k :: d -> a) -> contrafmap1 k id :: u d a) :: ContraYoneda1 u a a
+    (u1 :: ContraYoneda1 u b c) . (u2 :: ContraYoneda1 u a b) = ContraYoneda1 (\(k :: d -> a) -> runContraYoneda1 u1 id . runContraYoneda1 u2 k :: u d c)
+
 -- BiYonedaWotsit is the "mother of all BifunctorCategories"
 -- NB: might be nicer to formulate this in terms of pureA rather than bimap
 
@@ -206,6 +242,34 @@ instance Category (BiYonedaWotsit u) where
 instance BifunctorCategory (BiYonedaWotsit u) where
 
 
+-- ContraYoneda1Wotsit is the "mother of all ContraFunctor1Categories"
+
+class (ContraFunctor1 u, Category u) => ContraFunctor1Category u where
+
+instance Arrow u => ContraFunctor1Category u where
+
+pureA1 :: ContraFunctor1Category u => (a -> b) -> u a b
+pureA1 f = contrafmap1 f id
+
+newtype ContraYoneda1Wotsit u a b = ContraYoneda1Wotsit { runContraYoneda1Wotsit :: Wotsit (ContraYoneda1 u) a b }
+
+liftContraYoneda1Wotsit :: ContraFunctor1Category u => u a b -> ContraYoneda1Wotsit u a b
+liftContraYoneda1Wotsit u = ContraYoneda1Wotsit (liftWotsit (liftContraYoneda1 u))
+
+lowerContraYoneda1Wotsit :: ContraFunctor1Category u => ContraYoneda1Wotsit u a b -> u a b
+lowerContraYoneda1Wotsit u = lowerContraYoneda1 (lowerWotsit (runContraYoneda1Wotsit u))
+
+instance ContraFunctor1 (ContraYoneda1Wotsit u) where
+    --bimap f g u = BiYonedaWotsit (bimap f g (runBiYonedaWotsit u))
+    contrafmap1 f u = ContraYoneda1Wotsit (Wotsit (\k -> contrafmap1 f (runWotsit (runContraYoneda1Wotsit u) k)))
+
+instance Category (ContraYoneda1Wotsit u) where
+    id = ContraYoneda1Wotsit id
+    u1 . u2 = ContraYoneda1Wotsit (runContraYoneda1Wotsit u1 . runContraYoneda1Wotsit u2)
+
+instance ContraFunctor1Category (ContraYoneda1Wotsit u) where
+
+
 -- Voldemort is the "mother of all arrows":
 
 -- arr   :: forall c d. (c -> d) -> r c d
@@ -213,24 +277,33 @@ instance BifunctorCategory (BiYonedaWotsit u) where
 -- first :: forall a b. r a b -> (forall c. r (a, c) (b, c))
 -- (***) :: forall a b. r a b -> (forall c d. r c d -> r (a, c) (b, d))
 --
--- first (pure f)                  = pure (f `cross` id)
--- first (f >>> g)                 = first f >>> first g
--- first f >>> pure (id `cross` g) = pure (id `cross` g) >>> first f
--- first f >>> pure fst            = pure fst >>> f
--- first (first f) >>> pure assoc  = pure assoc >>> first f
+-- pure id                         = id                               -- Functor-identity
+-- pure (g . f)                    = pure f >>> pure g                -- Functor-composition
+-- first (pure f)                  = pure (f `cross` id)              -- Extension
+-- first (f >>> g)                 = first f >>> first g              -- Functor
+-- first f >>> pure (id `cross` g) = pure (id `cross` g) >>> first f  -- Exchange
+-- first f >>> pure fst            = pure fst >>> f                   -- Unit
+-- first (first f) >>> pure assoc  = pure assoc >>> first f           -- Association
 --
 --  where
 --    f `cross` g = \(x, y) -> (f x, g y)
 --    assoc (~(a, b), c) = (a, (b, c))
-newtype Voldemort r a b = Voldemort { runVoldemort :: forall c. BiYonedaWotsit r (a, c) (b, c) }
+--newtype Voldemort r a b = Voldemort { runVoldemort :: forall c. BiYonedaWotsit r (a, c) (b, c) }
+newtype Voldemort r a b = Voldemort { runVoldemort :: forall c. ContraYoneda1Wotsit r (a, c) (b, c) }
+
+liftVoldemort :: Arrow r => r a b -> Voldemort r a b
+liftVoldemort r = Voldemort (liftContraYoneda1Wotsit (first r))
+
+lowerVoldemort :: Arrow r => Voldemort r a b -> r a b
+lowerVoldemort (r :: Voldemort r a b) = arr (\x -> (x, ())) >>> lowerContraYoneda1Wotsit (runVoldemort r) >>> arr (\(x, ()) -> x)
 
 instance Category (Voldemort r) where
     id = Voldemort id
     t1 . t2 = Voldemort (runVoldemort t1 . runVoldemort t2)
 
 instance Arrow (Voldemort r) where
-    arr f = Voldemort $ pureA (\(x, y) -> (f x, y))
-    first (t1 :: Voldemort r a b) = Voldemort (pureA (\(~(a, c), d) -> (a, (c, d))) >>> runVoldemort t1 >>> pureA (\(b, ~(c, d)) -> ((b, c), d)))
+    arr f = Voldemort $ pureA1 (\(x, y) -> (f x, y))
+    first (t1 :: Voldemort r a b) = Voldemort (pureA1 (\(~(a, c), d) -> (a, (c, d))) >>> runVoldemort t1 >>> pureA1 (\(b, ~(c, d)) -> ((b, c), d)))
 
 
 -- Codensity is the "mother of all monads":
@@ -259,6 +332,28 @@ instance Applicative (Codensity f) where
 instance Monad (Codensity f) where
     return x = Codensity (\k -> k x)
     m >>= k = Codensity (\c -> runCodensity m (\a -> runCodensity (k a) c))
+
+
+-- Addity is the "mother of all MonadPlus"
+
+-- mzero :: forall a. m a
+-- mplus :: forall a. m a -> m a -> m a
+--
+-- mzero >>= f         = mzero                -- Left-zero
+-- v >>= (\_ -> mzero) = mzero                -- Right-zero
+-- mplus mzero m       = m                    -- Left-identity
+-- mplus m mzero       = m                    -- Right-identity
+-- mplus m (mplus n o) = mplus (mplus m n) o  -- Associativity
+newtype Addity p a = Addity { runAddity :: Codensity p a -> Codensity p a }
+
+liftAddity :: MonadPlus p => p a -> Addity p a
+liftAddity m = Addity (liftCodensity . mplus m . lowerCodensity)
+
+lowerAddity :: MonadPlus p => Addity p a -> p a
+lowerAddity m = lowerCodensity (runAddity m (liftCodensity mzero))
+
+-- instance Functor (Addity m) where
+--     fmap (f :: a -> b) (m :: Addity m a) = Addity (\k -> fmap f (runAddity m k))
 
 
 main :: IO ()
