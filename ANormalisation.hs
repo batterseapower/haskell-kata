@@ -1,23 +1,21 @@
 {-# LANGUAGE RankNTypes #-}
 import Text.PrettyPrint.HughesPJClass
 
-import Data.Supply
-
 import System.IO.Unsafe
 
 import Control.Monad.State
 
 
-type UniqM = State (Supply Int)
+type UniqM = State [Int]
 
-uniqSupply :: Supply Int
-uniqSupply = unsafePerformIO $ newSupply 0 (+1)
+uniqSupply :: [Int]
+uniqSupply = [0..]
 
 runUniq :: UniqM a -> a
 runUniq = flip evalState uniqSupply
 
 unique :: UniqM Int
-unique = get >>= \s -> let (s1, s2) = split2 s in put s2 >> return (supplyValue s1)
+unique = get >>= \(x:ss) -> put ss >> return x
 
 
 -- -- Codensity is the "mother of all monads":
