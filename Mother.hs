@@ -497,7 +497,7 @@ instance Arrow (Voldemort r) where
     --   = Voldemort (pureC (\(b, ~(c, d)) -> (((id `cross` g) (b, c), d))) . runVoldemort f . pureC assoc)
     --   = Voldemort (pureC (\(b, ~(c, d)) -> (((id b, g c), d))) . runVoldemort f . pureC assoc)
     --   = Voldemort (pureC (\(b, ~(c, d)) -> (((b, g c), d))) . runVoldemort f . pureC assoc)
-    --
+    --   ??? free theorem (after expanding . and pureC for PurishWotsit)
     --   = Voldemort (pureC reassoc . runVoldemort f . pureC (\(~(a, c), d) -> (a, (g c, d))))
     --   = Voldemort (pureC reassoc . runVoldemort f . pureC (assoc . (\(~(a, c), d) -> ((id a, g c), d))))
     --   = Voldemort (pureC reassoc . runVoldemort f . pureC (assoc . (\(x, y) -> ((id `cross` g) x, y))))
@@ -505,6 +505,31 @@ instance Arrow (Voldemort r) where
     --   = Voldemort ((pureC assoc >>> runVoldemort f >>> pureC reassoc) . (pureC (\(x, y) -> ((id `cross` g) x, y))))
     --   = Voldemort (runVoldemort (Voldemort (pureC assoc >>> runVoldemort f >>> pureC reassoc)) . runVoldemort (Voldemort (pureC (\(x, y) -> ((id `cross` g) x, y)))))
     --   = arr (id `cross` g) >>> first f
+    --
+    -- first f >>> arr fst
+    --   = Voldemort (runVoldemort (Voldemort (pureC (\(x, y) -> (fst x, y)))) . runVoldemort (Voldemort (pureC assoc >>> runVoldemort f >>> pureC reassoc)))
+    --   = Voldemort (pureC (\(x, y) -> (fst x, y)) . pureC reassoc . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC ((\(x, y) -> (fst x, y)) . reassoc) . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC (\(b, ~(c, d)) -> (fst (b, c), d)) . runVoldemort f . pureC assoc)
+    --   = Voldemort (pureC (\(b, ~(c, d)) -> (b, d)) . runVoldemort f . pureC (\(~(a, c), d) -> (a, (c, d))))
+    --   ??? free theorem (after expanding . and pureC for PurishWotsit)
+    --   = Voldemort (runVoldemort f . pureC (\(~(b, c), d) -> (b, d)))
+    --   = Voldemort (runVoldemort f . pureC (\(x, y) -> (fst x, y)))
+    --   = Voldemort (runVoldemort f . runVoldemort (Voldemort (pureC (\(x, y) -> (fst x, y)))))
+    --   = arr fst >>> f
+    --
+    -- first (first f) >>> arr assoc
+    --   = Voldemort (runVoldemort (Voldemort (pureC (\(x, y) -> (assoc x, y)))) . runVoldemort (Voldemort (pureC assoc >>> runVoldemort (Voldemort (pureC assoc >>> runVoldemort f >>> pureC reassoc)) >>> pureC reassoc)))
+    --   = Voldemort ((pureC (\(x, y) -> (assoc x, y))) . (pureC assoc >>> (pureC assoc >>> runVoldemort f >>> pureC reassoc) >>> pureC reassoc))
+    --   = Voldemort (pureC (\(x, y) -> (assoc x, y)) . pureC reassoc . pureC reassoc . runVoldemort f . pureC assoc . pureC assoc)
+    --   = Voldemort (pureC ((\(x, y) -> (assoc x, y)) . reassoc . reassoc) . runVoldemort f . pureC (assoc . assoc))
+    --   = Voldemort (pureC (\(b, ~(c, ~(d, e))) -> ((b, (c, d)), e)) . runVoldemort f . pureC (\(~(~(a, b), c), d) -> (a, (b, (c, d)))))
+    --   ??? free theorem
+    --   = Voldemort (pureC (\(b, ~(c, d)) -> ((b, c), d)) . runVoldemort f . pureC (\(~(~(a, b), c), d) -> (a, ((b, c), d))))
+    --   = Voldemort (pureC reassoc . runVoldemort f . pureC (assoc . (\(x, y) -> (assoc x, y))))
+    --   = Voldemort (pureC reassoc . runVoldemort f . pureC assoc . pureC (\(x, y) -> (assoc x, y)))
+    --   = Voldemort ((pureC assoc >>> runVoldemort f >>> pureC reassoc) . (pureC (\(x, y) -> (assoc x, y))))
+    --   = arr assoc >>> first f
 
 
 -- Codensity is the "mother of all monads":
