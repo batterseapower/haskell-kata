@@ -56,6 +56,46 @@ instance Applicative f => Applicative (Yoneda f) where
 -- u <*> (v <*> w)   ==> pure (.) <*> u <*> v <*> w -- Composition
 -- pure f <*> pure x ==> pure (f x)                 -- Homomorphism
 -- u <*> pure y      ==> pure ($ y) <*> u           -- Interchange
+newtype Thingy3 i a = Thingy3 { runThingy3 :: forall b. (forall c. (c -> a) -> i (c -> b)) -> i b }
+
+instance Functor (Thingy3 i) where
+    fmap (f :: a -> b) (m :: Thingy3 i a) = Thingy3 (\(k :: forall f. (f -> b) -> i (f -> c)) -> runThingy3 m (\(g :: e -> a) -> k (f . g :: e -> b) :: i (e -> c)) :: i c)
+    -- f :: a -> b
+    -- runThingy3 m :: forall d. (forall e. (e -> a) -> i (e -> d)) -> i d
+    -- k :: forall f. (f -> b) -> i (f -> c)
+    --
+    -- GOAL:
+    --   undefined :: i c
+    --   runThingy3 m (undefined :: (forall e. (e -> a) -> i (e -> c))) :: i c
+    --   runThingy3 m (\(g :: e -> a) -> undefined :: i (e -> c)) :: i c
+    --   runThingy3 m (\(g :: e -> a) -> k (undefined :: e -> b) :: i (e -> c)) :: i c
+    --   runThingy3 m (\(g :: e -> a) -> k (f . g :: e -> b) :: i (e -> c)) :: i c
+
+instance Applicative (Thingy3 i) where
+    pure (x :: a) = Thingy3 (\(k :: forall f. (f -> a) -> i (f -> b)) -> undefined :: i b)
+    -- x :: a
+    -- k :: forall f. (f -> a) -> i (f -> b)
+    --
+    -- GOAL:
+    --   undefined :: i b
+
+
+newtype Thingy2 i a = Thingy2 { runThingy2 :: forall b. (forall c. ((a -> b) -> c) -> i c) -> (forall d. (b -> d) -> i d) }
+
+liftThingy2 :: Applicative i => i a -> Thingy2 i a
+liftThingy2 i = Thingy2 (\k -> flip fmap (i <**> k id))
+
+lowerThingy2 :: Applicative i => Thingy2 i a -> i a
+lowerThingy2 i = runThingy2 i (flip fmap (pure id)) id
+
+instance Functor (Thingy2 i) where
+    fmap f m = Thingy2 $ runThingy2 m . (\m -> (\k -> m (k . (. f))))
+
+instance Applicative (Thingy2 i) where
+    pure x    = Thingy2 $ \k f -> k (\g -> f (g x))
+    mf <*> mx = Thingy2 $ \k -> runThingy2 mx (runThingy2 mf (\f -> k (\g -> f (g .))))
+
+
 newtype Thingy i a = Thingy { runThingy :: forall b. Yoneda i (a -> b) -> Yoneda i b }
 
 liftThingy :: Applicative i => i a -> Thingy i a
@@ -464,7 +504,10 @@ instance PurishCategory (Voldemort r) where
 
 instance Arrow (Voldemort r) where
     arr = pureC
-    first t1 = Voldemort (pureC assoc >>> runVoldemort t1 >>> pureC reassoc)
+    -- first t1 = Voldemort (pureC assoc >>> runVoldemort t1 >>> pureC reassoc)
+    --       where assoc   (~(a, c), d) = (a, (c, d))
+    --             reassoc (b, ~(c, d)) = ((b, c), d)
+    first t1 = Voldemort (PurishWotsit ((\k k' -> k (assoc . k')) . runPurishWotsit (runVoldemort t1) . (\k k' -> k (reassoc . k'))))
       where assoc   (~(a, c), d) = (a, (c, d))
             reassoc (b, ~(c, d)) = ((b, c), d)
     -- first (arr f)
@@ -614,7 +657,7 @@ instance MonadPlus (CodensityPlus p) where
     --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus v (\x mfai -> runCodensityPlus ((\_ -> mzero) x) fmsuc mfai) mfai)
     --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus v (\x mfai -> runCodensityPlus (CodensityPlus (\_fmsuc mfai -> mfai)) fmsuc mfai) mfai)
     --   = CodensityPlus (\fmsuc mfai -> runCodensityPlus v (\x mfai -> mfai) mfai)
-    --   ???? parametricity
+    --
     --   = CodensityPlus (\_fmsuc mfai -> mfai)
     --   = mzero
     --
