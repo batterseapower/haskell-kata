@@ -1,7 +1,5 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes, ScopedTypeVariables, GADTs #-}
 import Text.PrettyPrint.HughesPJClass
-
-import Data.Supply
 
 import System.IO.Unsafe
 
@@ -9,16 +7,16 @@ import Control.Monad
 import Control.Monad.State
 
 
-type UniqM = State (Supply Int)
+type UniqM = State [Int]
 
-uniqSupply :: Supply Int
-uniqSupply = unsafePerformIO $ newSupply 0 (+1)
+uniqSupply :: [Int]
+uniqSupply = [0..]
 
 runUniq :: UniqM a -> a
 runUniq = flip evalState uniqSupply
 
 unique :: UniqM Int
-unique = get >>= \s -> let (s1, s2) = split2 s in put s2 >> return (supplyValue s1)
+unique = get >>= \(x:ss) -> put ss >> return x
 
 
 -- -- Thingy is the "mother of all idioms":
@@ -51,29 +49,91 @@ unique = get >>= \s -> let (s1, s2) = split2 s in put s2 >> return (supplyValue 
 --     mf <*> mx = Thingy $ \m -> runThingy mx (runThingy mf (Yoneda (\k -> runYoneda m (k . (.)))))
 
 
-instance Pretty IdiomSyn where
-    pPrint (Pure e)    = text "pure" <+> parens (text e)
+instance Pretty (IdiomSyn a) where
+    pPrint (Pure e)    = text "pure" <+> parens (pPrint e)
     pPrint (Ap mf mx)  = pPrint mf <+> text "<*>" <+> parens (pPrint mx)
     pPrint (Foreign e) = text e
 
+instance Pretty (Term a) where
+    pPrint = runUniq . pPrintTerm
 
-type Term = String
+pPrintTerm :: Term a -> UniqM Doc
+pPrintTerm (Lam f) = do
+    x <- fmap (\i -> "x" ++ show i) unique
+    d <- pPrintTerm (f (ForeignE x))
+    return $ parens $ text "\\" <> text x <+> text "->" <+> d
+pPrintTerm (App e1 e2) = liftM2 (\e1 e2 -> e1 <+> parens e2) (pPrintTerm e1) (pPrintTerm e2)
+pPrintTerm (ForeignE e) = return $ text e
 
-data IdiomSyn = Pure Term
-              | Ap IdiomSyn IdiomSyn
-              | Foreign String
 
-normalise :: IdiomSyn -> IdiomSyn
-normalise m = go m (\tt -> Pure (tt "id")) id
+data Term a where
+    Lam :: (Term a -> Term b) -> Term (a -> b)
+    App :: Term (a -> b) -> Term a -> Term b
+    ForeignE :: String -> Term a
+
+data IdiomSyn a where
+    Pure :: Term a -> IdiomSyn a
+    Ap :: IdiomSyn (a -> b) -> IdiomSyn a -> IdiomSyn b
+    Foreign :: String -> IdiomSyn a
+
+normalise :: IdiomSyn a -> IdiomSyn a
+normalise m = go m (\k -> Pure (k id)) id
   where
-    --    i a      -> forall b. (forall c. ((a -> b) -> c) -> i c)      -> (forall d. (b -> d)       -> i d)
-    go :: IdiomSyn -> (                    (Term -> Term)  -> IdiomSyn) -> (          (Term -> Term) -> IdiomSyn)
-    --go (Pure x)    k = \tt -> k (tt . (\t -> "(" ++ t ++ ") " ++ x))
-    --go (Ap mf mx)  k = \tt -> go mx (go mf (k $ tt . (\t -> "(.) (" ++ t ++ ")")))
+    --go :: forall a. IdiomSyn a
+    --   -> (forall b.
+    --      (forall c. ((Term a -> Term b) -> Term c) -> IdiomSyn c)
+    --   -> (forall d.
+    --      (Term b -> Term d)
+    --   -> IdiomSyn d))
+    go :: forall a b d.
+          IdiomSyn a
+       -> (forall c. ((Term a -> Term b) -> Term c) -> IdiomSyn c)
+       -> (Term b -> Term d)
+       -> IdiomSyn d
+    go (Pure x)    m = \k -> m (\k' -> k (k' x))
+    --go (Ap mf mx)  m = go mx (go mf (\k -> m (\k' -> k ((.) k'))))
+    -- go (Ap mf mx)  m = go mx (go mf (\k -> m (k . (\t -> "(.) (" ++ t ++ ")"))))
     
-    go (Pure x)    m = \k -> m (k . (\t -> t ++ " (" ++ x ++ ")"))
-    go (Ap mf mx)  m = go mx (go mf (\k -> m (k . (\t -> "(.) (" ++ t ++ ")")))) 
-    go (Foreign e) m = \k -> m (\t -> "(.) (\\x -> " ++ k "x" ++ ") (" ++ t ++ ")") `Ap` Foreign e
+    go (Ap mf mx) m = go mx (\k' -> go mf (\x -> m (\y -> x (\z -> Lam (\e -> y (z `App` e))))) (\w -> k' (w `App`)))
+    -- HAVE
+    --   mf :: IdiomSyn (e -> a)
+    --   mx :: IdiomSyn e
+    --   m :: forall f. ((Term a -> Term b) -> Term f) -> IdiomSyn f
+    --   k :: Term b -> Term d
+    --   go mf :: forall i.
+    --            (forall g. ((Term (e -> a) -> Term i) -> Term g) -> IdiomSyn g)
+    --         -> (forall h.
+    --            (Term i -> Term h)
+    --         -> IdiomSyn h)
+    --   go mx :: forall j.
+    --            (forall k. ((Term e -> Term j) -> Term k) -> IdiomSyn k)
+    --         -> (forall l.
+    --            (Term j -> Term l)
+    --         -> IdiomSyn l)
+    --
+    -- GOAL
+    --   undefined :: IdiomSyn d
+    --   go mx (\(k' :: (Term e -> Term b) -> Term k) -> undefined :: IdiomSyn k) k :: IdiomSyn d
+    --   go mx (\(k' :: (Term e -> Term b) -> Term k) -> go mf (\(x :: (Term (e -> a) -> Term (e -> b)) -> Term g) -> undefined :: IdiomSyn g) (undefined :: Term (e -> b) -> Term k) :: IdiomSyn k) k :: IdiomSyn d
+    --   go mx (\(k' :: (Term e -> Term b) -> Term k) -> go mf (\(x :: (Term (e -> a) -> Term (e -> b)) -> Term g) -> m (\(y :: (Term a -> Term b)) -> undefined :: Term g) :: IdiomSyn g) (undefined :: Term (e -> b) -> Term k) :: IdiomSyn k) k :: IdiomSyn d
+    --   go mx (\(k' :: (Term e -> Term b) -> Term k) -> go mf (\(x :: (Term (e -> a) -> Term (e -> b)) -> Term g) -> m (\(y :: (Term a -> Term b)) -> x (\(z :: Term (e -> a) -> Lam (\e -> y (z `App` e))))) :: IdiomSyn g) (\(w :: Term (e -> b)) -> k' (w `App`) :: Term k) :: IdiomSyn k) k :: IdiomSyn d
+    --     x :: ((Term (e -> a) -> Term (e -> b)) -> Term g
+    --     y :: Term a -> Term b
+    --
+    --     x (\(z :: Term (e -> a) -> Lam (\e -> y (z `App` e)))) :: Term g
+    
+    -- go (Foreign e) m = \k -> m (\t -> "(.) (\\x -> " ++ k "x" ++ ") (" ++ t ++ ")") `Ap` Foreign e
+    go x@(Foreign _) m = \k -> m (\k' -> Lam (k . k')) `Ap` x
+     -- HAVE
+     --   Foreign e :: IdiomSyn a
+     --   m :: forall f. ((Term a -> Term b) -> Term f) -> IdiomSyn f
+     --   k :: Term b -> Term d
+     -- 
+     -- GOAL
+     --   undefined :: IdiomSyn d
+     --   m (\(k' :: Term a -> Term b) -> undefined :: Term (a -> d)) `Ap` Foreign e :: IdiomSyn d
+     --   m (\(k' :: Term a -> Term b) -> Lam (k . k') :: Term (a -> d)) `Ap` Foreign e :: IdiomSyn d
+    
      -- e :: i a
      -- m :: (forall c. ((a -> b) -> c) -> i c)
      -- k :: (b -> d)
@@ -85,15 +145,23 @@ normalise m = go m (\tt -> Pure (tt "id")) id
      --  (\t -> "(.) (\x -> " ++ k "x" ++ ")") :: ((a -> b) -> (a -> d))
 
 
+comp :: Term ((b -> c) -> (a -> b) -> (a -> c))
+comp = Lam (\f -> Lam (\g -> Lam (\x -> f `App` (g `App` x))))
+
 non_normaliseds = [
+    -- Identity
+    Foreign "effectful",
+    Pure (Lam (\x -> x)) `Ap` Foreign "effectful",
     -- Composition
     Foreign "launchMissiles" `Ap` (Foreign "obtainLaunchCode" `Ap` Foreign "getAuthorization"),
-    Pure "launchMissiles'" `Ap` (Pure "obtainLaunchCode'" `Ap` Pure "getAuthorization'"),
+    Pure comp `Ap` Foreign "launchMissiles" `Ap` Foreign "obtainLaunchCode" `Ap` Foreign "getAuthorization",
+    Pure (ForeignE "launchMissiles'") `Ap` (Pure (ForeignE "obtainLaunchCode'") `Ap` Pure (ForeignE "getAuthorization'")),
     -- Homomorphism
-    Pure "f" `Ap` Pure "x",
+    Pure (ForeignE "f") `Ap` Pure (ForeignE "x"),
+    Pure (Lam (\x -> ForeignE "f" `App` x) `App` ForeignE "x"),
     -- Interchange
-    Foreign "launchMissiles" `Ap` Pure "1337",
-    Pure "($ 1337)" `Ap` Foreign "launchMissiles"
+    Foreign "launchMissiles" `Ap` Pure (ForeignE "1337"), -- NB: demonstrates normaliser weakness. Beta-reduction introduced by normalisation!
+    Pure (Lam (\x -> x `App` ForeignE "1337")) `Ap` Foreign "launchMissiles"
   ]
 
 main = forM_ non_normaliseds $ \non_normalised -> do
