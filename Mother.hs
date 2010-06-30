@@ -56,28 +56,115 @@ instance Applicative f => Applicative (Yoneda f) where
 -- u <*> (v <*> w)   ==> pure (.) <*> u <*> v <*> w -- Composition
 -- pure f <*> pure x ==> pure (f x)                 -- Homomorphism
 -- u <*> pure y      ==> pure ($ y) <*> u           -- Interchange
-newtype Thingy3 i a = Thingy3 { runThingy3 :: forall b. (forall c. (c -> a) -> i (c -> b)) -> i b }
+
+--newtype Thingy3 i a = Thingy3 { runThingy3 :: forall b. (forall c e. (c -> a) -> ((c -> b) -> e) -> i e) -> i b }
+--newtype Thingy2 i a = Thingy2 { runThingy2 :: forall b. (forall c. ((a -> b) -> c) -> i c) -> (forall d. (b -> d) -> i d) }
+newtype Thingy5 i a = Thingy5 { runThingy5 :: forall b. (forall c e. (c -> a) -> ((c -> b) -> e) -> i e) -> i b }
+
+newtype Thingy4 i a = Thingy4 { runThingy4 :: forall c d. i d -> (d -> (a -> c)) -> (forall e. (c -> e) -> i e) }
+
+instance Functor (Thingy4 i) where
+    fmap f m = Thingy4 (\k j l -> runThingy4 m k (\x y -> j x (f y)) l)
+    -- f :: a -> b
+    -- m :: Thingy4 i a
+    -- runThingy4 m :: forall f g. i g -> (g -> (a -> f)) -> (forall h. (f -> h) -> i h)
+    -- k :: i d
+    -- j :: d -> (b -> c)
+    -- l :: c -> e
+    --
+    -- GOAL:
+    --   undefined :: i e
+    --   runThingy4 m (undefined :: i g?) (undefined :: g? -> (a -> f?)) (undefined :: f? -> e) :: i e
+    --   runThingy4 m k (\(x :: d) (y :: a) -> j x (f y) :: c) (l :: c -> e) :: i e
+    --   runThingy4 m k (\x y -> j x (f y)) l
+
+--instance Applicative (Thingy4 i) where
+--    pure x = Thingy4 (\k j l -> undefined)
+    -- x :: a
+    -- k :: i d
+    -- j :: d -> (a -> c)
+    -- l :: c -> e
+    --
+    -- GOAL:
+    --   undefined :: i e
+    -- IMPOSSIBLE. Need functorality of i.
+
+
+newtype Thingy3 i a = Thingy3 { runThingy3 :: forall b. (forall c e. (c -> a) -> ((c -> b) -> e) -> i e) -> i b }
 
 instance Functor (Thingy3 i) where
-    fmap (f :: a -> b) (m :: Thingy3 i a) = Thingy3 (\(k :: forall f. (f -> b) -> i (f -> c)) -> runThingy3 m (\(g :: e -> a) -> k (f . g :: e -> b) :: i (e -> c)) :: i c)
+    fmap f m = Thingy3 (\k -> runThingy3 m (\g h -> k (f . g) h))
     -- f :: a -> b
-    -- runThingy3 m :: forall d. (forall e. (e -> a) -> i (e -> d)) -> i d
-    -- k :: forall f. (f -> b) -> i (f -> c)
+    -- runThingy3 m :: forall d. (forall e h. (e -> a) -> ((e -> d) -> h) -> i h) -> i d
+    -- k :: forall f g. (f -> b) -> ((f -> c) -> g) -> i g
     --
     -- GOAL:
     --   undefined :: i c
-    --   runThingy3 m (undefined :: (forall e. (e -> a) -> i (e -> c))) :: i c
-    --   runThingy3 m (\(g :: e -> a) -> undefined :: i (e -> c)) :: i c
-    --   runThingy3 m (\(g :: e -> a) -> k (undefined :: e -> b) :: i (e -> c)) :: i c
-    --   runThingy3 m (\(g :: e -> a) -> k (f . g :: e -> b) :: i (e -> c)) :: i c
+    --   runThingy3 m (undefined :: (forall e h. (e -> a) -> ((e -> d) -> h) -> i h)) :: i c
+    --   runThingy3 m (\(g :: e -> a) (h :: (e -> d) -> h) -> undefined :: i h) :: i c
+    --   runThingy3 m (\(g :: e -> a) (h :: (e -> d) -> h) -> k (undefined :: f? -> b) (undefined :: ((f? -> c) -> h)) :: i h) :: i c
+    
+    
+    --   runThingy3 m (\(g :: e -> a) h -> k (undefined :: e -> b) h :: i (e -> c)) :: i c
+    --   runThingy3 m (\(g :: e -> a) h -> k (f . g :: e -> b) h :: i (e -> c)) :: i c
 
 instance Applicative (Thingy3 i) where
-    pure (x :: a) = Thingy3 (\(k :: forall f. (f -> a) -> i (f -> b)) -> undefined :: i b)
+    --pure (x :: a) = Thingy3 (\(k :: forall f g. (f -> a) -> ((f -> b) -> g) -> i g) -> k id (\f -> f x) :: i b)
+    pure x = Thingy3 (\k -> k id ($ x))
     -- x :: a
-    -- k :: forall f. (f -> a) -> i (f -> b)
+    -- k :: forall f g. (f -> a) -> ((f -> b) -> g) -> i g
     --
     -- GOAL:
     --   undefined :: i b
+    --   k (undefined :: f? -> a) (undefined :: (f? -> b) -> b) :: i b
+    --   k id (\f -> f x) :: i b
+    
+    --(mf :: Thingy3 i (c -> a)) <*> (mx :: Thingy3 i c) = Thingy3 (\(k :: forall d e. (d -> a) -> ((d -> b) -> e) -> i e) -> runThingy3 mx (\(f :: k -> c) (g :: (k -> b) -> l) -> runThingy3 mf (\(h :: g -> (c -> a)) (i :: (g -> l) -> h) -> k id (\(l :: a -> b) -> i (\(x :: g) -> g (\(z :: k) -> l (h x (f z :: c) :: a) :: b) :: l) :: h) :: i h) :: i l) :: i b)
+    mf <*> mx = Thingy3 (\k -> runThingy3 mx (\f g -> runThingy3 mf (\h i -> k id (\l -> i (\x -> g (\z -> l (h x (f z))))))))
+    -- mf :: Thingy3 i (c -> a)
+    -- mx :: Thingy3 i c
+    -- k :: forall d e. (d -> a) -> ((d -> b) -> e) -> i e
+    -- runThingy3 mf :: forall f. (forall g h. (g -> (c -> a)) -> ((g -> f) -> h) -> i h) -> i f
+    -- runThingy3 mx :: forall j. (forall k l. (k -> c) -> ((k -> j) -> l) -> i l) -> i j
+    --
+    -- GOAL:
+    --   undefined :: i b
+    --   runThingy3 mx (\(f :: k -> c) (g :: (k -> b) -> l) -> undefined :: i l) :: i b
+    --   runThingy3 mx (\(f :: k -> c) (g :: (k -> b) -> l) -> runThingy3 mf (\(h :: g -> (c -> a)) (i :: (g -> l) -> h) -> undefined :: i h) :: i l) :: i b
+    --   runThingy3 mx (\(f :: k -> c) (g :: (k -> b) -> l) -> runThingy3 mf (\(h :: g -> (c -> a)) (i :: (g -> l) -> h) -> k (undefined :: d? -> a) (\(l :: d? -> b) -> undefined :: h) :: i h) :: i l) :: i b
+    --
+    -- f :: k -> c
+    -- g :: (k -> b) -> l
+    -- h :: g -> (c -> a)
+    -- i :: (g -> l) -> h
+    --
+    -- (\(y :: d?) -> h (undefined :: g) (f (undefined :: k) :: c) :: a) (\(l :: d? -> b) -> i (\(x :: g) -> g (\(z :: k) -> l (undefined :: d?) :: b) :: l) :: h) :: i h)
+    -- id (\(l :: a -> b) -> i (\(x :: g) -> g (\(z :: k) -> l (h x (f z :: c) :: a) :: b) :: l) :: h) :: i h)
+    --
+    --   runThingy3 mx (\(f :: k -> c) (g :: (k -> b) -> l) -> runThingy3 mf (\(h :: g -> (c -> a)) (i :: (g -> l) -> h) -> k id (\(l :: a -> b) -> i (\(x :: g) -> g (\(z :: k) -> l (h x (f z :: c) :: a) :: b) :: l) :: h) :: i h) :: i l) :: i b
+
+    -- pure id <*> v
+    --   = Thingy3 (\k -> runThingy3 (Thingy3 (\k -> k id ($ id))) (\f g -> runThingy3 v (\h i -> k id (\l -> i (\x -> g (\z -> l (h x (f z))))))))
+    --   = Thingy3 (\k -> (runThingy3 v (\h i -> k id (\l -> i (\x -> ($ id) (\z -> l (h x (id z))))))))
+    --   = Thingy3 (\k -> runThingy3 v (\h i -> k id (\l -> i (\x -> l (h x id)))))
+    --
+    --   = Thingy3 (\k -> runThingy3 v k)
+    --   = v
+    --
+    -- pure h <*> pure x
+    --   = Thingy3 (\k -> runThingy3 (Thingy3 (\k -> k id ($ x))) (\f g -> runThingy3 (Thingy3 (\k -> k id ($ h))) (\h i -> k id (\l -> i (\x -> g (\z -> l (h x (f z))))))))
+    --   = Thingy3 (\k -> (\k -> k id ($ x)) (\f g -> ((k id (\l -> ($ h) (\x -> g (\z -> l (id x (f z)))))))))
+    --   = Thingy3 (\k -> ((((k id (\l -> ($ h) (\x -> ($ x) (\z -> l (id x (id z))))))))))
+    --   = Thingy3 (\k -> k id (\l -> l (h x)))
+    --   = Thingy3 (\k -> k id ($ (h x)))
+    --   = pure (h x)
+    --
+    -- pure ($ y) <*> u
+    --   = Thingy3 (\k -> runThingy3 u (\f g -> runThingy3 (Thingy3 (\k -> k id ($ ($ y)))) (\h i -> k id (\l -> i (\x -> g (\z -> l (h x (f z))))))))
+    --   = Thingy3 (\k -> runThingy3 u (\f g -> k id (\l -> g (\z -> l (f z y)))))
+    --   = Thingy3 (\k -> runThingy3 u (\h i -> k id (\l -> i (\x -> l (h x y)))))
+    --   = Thingy3 (\k -> runThingy3 (Thingy3 (\k -> k id ($ y))) (\f g -> runThingy3 u (\h i -> k id (\l -> i (\x -> g (\z -> l (h x (f z))))))))
+    --   = u <*> pure y
 
 
 newtype Thingy2 i a = Thingy2 { runThingy2 :: forall b. (forall c. ((a -> b) -> c) -> i c) -> (forall d. (b -> d) -> i d) }
