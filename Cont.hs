@@ -2,6 +2,8 @@
 import Control.Arrow (first)
 import Control.Monad
 
+import Data.Maybe
+
 
 newtype Cont res a = Cont { unCont :: (a -> res) -> res }
 
@@ -39,8 +41,39 @@ instance Monad ScpM' where
     mx >>= fxmy = ScpM' (\s -> case unScpM' mx s of (s, x) -> unScpM' (fxmy x) s)
 
 
+data CompTree a = Branch (CompTree a) (CompTree a)
+                | Leaf a
+
+mkCompTree :: [a] -> Maybe (CompTree a)
+mkCompTree [] = Nothing
+mkCompTree [x] = Just (Leaf x)
+mkCompTree xs  = case mb_t1 of Nothing -> mb_t2; Just t1 -> case mb_t2 of Nothing -> Just t1; Just t2 -> Just (Branch t1 t2)
+  where (xs1, xs2) = splitAt (length xs `div` 2) xs
+        mb_t1 = mkCompTree xs1
+        mb_t2 = mkCompTree xs2
+
+flattenCompTree :: CompTree a -> [a]
+flattenCompTree (Leaf x) = [x]
+flattenCompTree (Branch t1 t2) = flattenCompTree t1 ++ flattenCompTree t2
+
+instance Functor CompTree where
+    fmap f (Leaf x)       = Leaf (f x)
+    fmap f (Branch t1 t2) = Branch (fmap f t1) (fmap f t2)
+
+compTreeLeftmost :: CompTree a -> (a, a -> CompTree a)
+compTreeLeftmost (Leaf x)       = (x, Leaf)
+compTreeLeftmost (Branch t1 t2) = (x, \x' -> Branch (rb x') t2)
+  where (x, rb) = compTreeLeftmost t1
+
+compTreeLeftmost' :: CompTree a -> (a, Either (CompTree a, b -> CompTree b -> CompTree b) (b -> CompTree b))
+compTreeLeftmost' (Leaf x)       = (x, Right Leaf)
+compTreeLeftmost' (Branch t1 t2) = (x, Left $ case ei of Left (t', rb) -> (Branch t' t2, \y (Branch t' t2) -> Branch (rb y t') t2)
+                                                         Right rb      -> (t2,           \y t2             -> Branch (rb y)    t2))
+  where (x, ei) = compTreeLeftmost' t1
+
+
 type ScpM = ContT Res ScpM'
-data Res = Choice { resComps :: [ScpM Res'], resCont :: [Res'] -> ScpM' Res }
+data Res = Choice { resComps :: CompTree (ScpM Res'), resCont :: Maybe (CompTree Res') -> ScpM' Res }
          | Done Res'
 type Res' = Tree Int
 
@@ -49,18 +82,19 @@ runScpM mx = runScpM' $ unContT mx (return . Done) >>= combine
   where
     combine :: Res -> ScpM' Res'
     combine (Done b)            = return b
-    combine (Choice comps cont) = combineChoice comps cont
+    combine (Choice comps cont) = combineChoice (Just comps) cont
 
-    combineChoice :: [ScpM Res'] -> ([Res'] -> ScpM' Res) -> ScpM' Res'
-    combineChoice []           cont = cont [] >>= combine
-    combineChoice (comp:comps) cont = do
+    combineChoice :: Maybe (CompTree (ScpM Res')) -> (Maybe (CompTree Res') -> ScpM' Res) -> ScpM' Res'
+    combineChoice Nothing  cont = cont Nothing >>= combine
+    combineChoice (Just t) cont = do
+      let (comp, ei) = compTreeLeftmost' t
       r <- unContT comp (return . Done)
       case r of
-          Done b              -> combineChoice comps (\bs -> cont (b:bs))
+          Done b              -> combineChoice (case ei of Left (comps, _) -> Just comps; Right _ -> Nothing) (case ei of Left (_, rb) -> \(Just bs) -> cont (Just (rb b bs)); Right rb -> \Nothing -> cont (Just (rb b)))
           -- Effects in breadth-first order:
-          --Choice comps' cont' -> combine (Choice (comps ++ comps') (\bs -> case comps  `splitBy` bs of (bs, bs') -> cont' bs' >>= \r -> combine r >>= \b -> cont (b : bs)))
+          --Choice comps' cont' -> combineChoice (case ei of Left (comps, _) -> Just (Branch comps comps'); Right _ -> Just comps') (case ei of Left (_, rb) -> \(Just (Branch bs bs')) -> cont' (Just bs') >>= \r -> combine r >>= \b -> cont (Just (rb b bs)); Right rb -> \(Just bs') -> cont' (Just bs') >>= \r -> combine r >>= \b -> cont (Just (rb b)))
           -- Effects in depth-first order:
-          Choice comps' cont' -> combineChoice (comps' ++ comps) (\bs -> case comps' `splitBy` bs of (bs', bs) -> cont' bs' >>= \r -> combine r >>= \b -> cont (b : bs))
+          Choice comps' cont' -> combineChoice (case ei of Left (comps, _) -> Just (Branch comps' comps); Right _ -> Just comps') (case ei of Left (_, rb) -> \(Just (Branch bs' bs)) -> cont' (Just bs') >>= \r -> combine r >>= \b -> cont (Just (rb b bs)); Right rb -> \(Just bs') -> cont' (Just bs') >>= \r -> combine r >>= \b -> cont (Just (rb b)))
 
 runScpM' :: ScpM' a -> a
 runScpM' mx = snd (unScpM' mx 0)
@@ -80,7 +114,7 @@ class Monad m => MonadChoice m where
     choice :: [m Res'] -> m [Res']
 
 instance MonadChoice ScpM where
-    choice mxs = ContT $ \c -> return (Choice mxs c)
+    choice mxs = ContT $ \c -> return (Choice (fromJust (mkCompTree mxs)) (\(Just ress') -> c (flattenCompTree ress')))
 
 --done :: [Res'] -> ScpM a
 --done bs = ContT $ \_ -> return (Done bs)
