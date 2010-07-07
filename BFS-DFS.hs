@@ -97,19 +97,54 @@ runScpM = runScpM' . go0
     bfs' (Candidate (Star mf mx) cont:cs) = bfs' (cs ++ [Candidate mf (\f -> return (Res (Deepen (fmap f mx)) cont)), Candidate mx (\x -> return (Res (Deepen (fmap ($ x) mf)) cont))])
     -}
     
-    bfs at cont = bfs' [Candidate at id] cont
+    {-
+    bfs :: forall a r.
+           ApplicativeTree ScpM a
+        -> (ApplicativeTree ScpM a -> r)
+        -> (a -> ScpM' (Res Res'))
+        -> ScpM' Res'
+        -}
+    bfs at k = bfs' [Candidate at k (\at' -> bfs at' k)]
     
+    bfs' :: [Candidate] -> ScpM' Res'
+    bfs' (Candidate (Lifted (mx :: ScpM a)) k rb:cands) = do
+        r <- unContT mx k
+        case r of
+            Done x     -> return x
+            Res at' k' -> bfs' (cands ++ [Candidate at' k' (\at' -> bfs at' k')])
+    bfs' (Candidate (Pure x) k rb:cands) = do
+        r <- k x
+        case r of
+            Done x     -> return x
+            Res at' k' -> bfs' (cands ++ [Candidate at' k' (\at' -> bfs at' k')])
+    bfs' (Candidate (Star (Pure f) (Pure x)) k rb:cands) = do
+        r <- k (f x)
+        case r of
+            Done x     -> return x
+            Res at' k' -> bfs' (cands ++ [Candidate at' k' (\at' -> bfs at' k')])
+    bfs' (Candidate (Star fat xat) k rb:cands) = do
+        bfs' (cands ++ [Candidate xat (\x -> rb (Star fat (Pure x))) (\xat -> rb (Star fat xat)),
+                        Candidate fat (\f -> rb (Star (Pure f) xat)) (\fat -> rb (Star fat xat))])
+    
+    {-
     bfs' :: [Candidate' b] -> (b -> ScpM' (Res Res')) -> ScpM' Res'
     bfs' (Candidate' (Lifted mx)  rb cont:cs) contt = do
         r <- unContT mx cont
         case r of Done x -> bfs (rb (Pure x)) contt
                   Res at cont -> undefined
-    bfs' (Candidate' (Pure x)     rb cont:cs) contt = s
-    bfs' (Candidate' (Star mf mx) rb cont:cs)  contt = bfs' (cs ++ [Candidate' mf (\f -> cont (f `Star` mx)) (\f -> return (Res (fmap f mx) cont)),
-                                                              Candidate' mx (\x -> cont (mf `Star`x))  (\x -> return (Res (fmap ($ x) mf) cont))]) contt
+    --bfs' (Candidate' (Pure x)     rb cont:cs) contt = s
+    bfs' (Candidate' (Star mf mx) rb cont:cs) contt = bfs' (cs ++ [Candidate' mf (\f -> cont (f `Star` mx)) (\f -> return (Res (fmap f mx) cont)),
+                                                                   Candidate' mx (\x -> cont (mf `Star`x))  (\x -> return (Res (fmap ($ x) mf) cont))]) contt
+    -}
+
+data Candidate = forall a. Candidate {
+    focus :: ApplicativeTree ScpM a,
+    finished :: a -> ScpM' (Res Res'),                     -- If focus reduced to pure value
+    rebuild  :: ApplicativeTree ScpM a -> ScpM' (Res Res') -- If focus still a tree of some sort
+  }
 
 --data Candidate = forall a. Candidate Int (ApplicativeTree ScpM a) (a -> ScpM' (Res Res'))
-data Candidate' b = forall a. Candidate' (ApplicativeTree ScpM a) (ApplicativeTree ScpM a -> ApplicativeTree ScpM b) (a -> ScpM' (Res Res'))
+--data Candidate' b = forall a. Candidate' (ApplicativeTree ScpM a) (ApplicativeTree ScpM a -> ApplicativeTree ScpM b) (a -> ScpM' (Res Res'))
 --data Candidate2 = forall a. Candidate2 (ScpM a) (a -> ScpM' (Res Res'))
 
 {-
