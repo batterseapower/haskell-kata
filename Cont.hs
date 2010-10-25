@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE TypeSynonymInstances, Rank2Types #-}
 import Control.Arrow (first)
 import Control.Monad
 
