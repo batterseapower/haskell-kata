@@ -57,7 +57,7 @@ justLeftmost (Delayed qs k) = delayTail qs >>= k
   where
     delayTail :: DelayStructure sh q -> DelayM q a (DelayStructure sh a)
     delayTail (Leaf q)         = fmap Leaf (delay q)
-    delayTail (Branch qs1 qs2) = liftM2 Branch (delayTail qs1) (delayTail qs2)
+    delayTail (Branch qs1 qs2) = liftM2 Branch (delayTail qs1) (traverse delay qs2)
 
 
 -- Simple example supercompiler-alike to show that it all works:
