@@ -13,13 +13,15 @@ import Debug.Trace
 
 type Var = String
 type Label = Int
-data Exp = Halt | Ref Var | Lam Label [Var] Call deriving (Eq, Ord, Show) -- In the Haskell tradition, I'm only allowing unary abstraction/application
+data Exp = Halt | Ref Var | Lam Label [Var] Call deriving (Eq, Ord, Show)
 data Call = Call Label Exp [Exp] deriving (Eq, Ord, Show)
 
 -- Abstract state space
 data State = State Call BEnv Store Time deriving (Eq, Ord, Show)
 -- A binding environment maps variables to addresses
-type BEnv = M.Map Var Addr
+-- (In Matt's example, this mapped to Addr, but I found this a bit redundant
+-- since the Var in the Addr can be inferred, so I map straight to Time)
+type BEnv = M.Map Var Time
 -- A store maps addresses to denotable values
 type Store = M.Map Addr Denotable
 -- | An abstact denotable value is a set of possible values
@@ -52,16 +54,13 @@ k = 1
 tick :: Label -> Time -> Time
 tick l t = take k (l:t)
 
-alloc :: Time -> Var -> Addr
-alloc t x = Binding x t
-
 -- k-CFA abstract interpreter
 
 atomEval :: BEnv -> Store -> Exp -> Denotable
 atomEval benv store Halt    = S.singleton HaltClosure
 atomEval benv store (Ref x) = case M.lookup x benv of
     Nothing   -> error "Var unbound in BEnv"
-    Just addr -> case M.lookup addr store of
+    Just t -> case M.lookup (Binding x t) store of
         Nothing -> error "Address unbound in Store"
         Just d  -> d
 atomEval benv _     (Lam l v c) = S.singleton (Closure (l, v, c) benv)
@@ -74,10 +73,9 @@ next s@(State (Call l fun args) benv store time)
                , (formals, call', benv') <- case clo of
                     Closure (_, formals, call') benv' -> [(formals, call', benv')]
                     HaltClosure                       -> []
-               , let bindings = map (alloc time) formals
-                     benv'' = foldr (\(formal, binding) benv' -> M.insert formal binding benv') benv' (formals `zip` bindings)
+               , let benv'' = foldr (\formal benv' -> M.insert formal time benv') benv' formals
                , params <- S.toList (transpose paramss)
-               , let store' = foldr (\(binding, params) store  -> storeInsert binding params store) store (bindings `zip` params)]
+               , let store' = foldr (\(formal, params) store  -> storeInsert (Binding formal time) params store) store (formals `zip` params)]
   where time' = tick l time
         procs  = atomEval benv store fun
         paramss = map (atomEval benv store) args
@@ -93,12 +91,19 @@ explore seen [] = seen
 explore seen (todo:todos)
   | todo `S.member` seen = explore seen todos
   | otherwise            = explore (S.insert todo seen) (S.toList (next todo) ++ todos)
+ -- NB: Might's dissertation (Section 5.3.5) explains how we can apply widening here to
+ -- improve the worst case runtime from exponential to cubic: for an new state from the
+ -- work list, we must extract all seen states which match in every element *except* the
+ -- store. Then, join those seen stores together. If the potential store is a subset
+ -- of the seen ones then we can just loop. Otherwise, union the new store onto a global
+ -- "widening" store, update the global store with this one, and do abstract evalution on the state with the new sotre.
 
 -- User interface
 
 summarize :: S.Set State -> Store
 summarize states = S.fold (\(State _ _ store' _) store -> store `storeJoin` store') M.empty states
 
+-- ("Monovariant" because it throws away information we know about what time things arrive at)
 monovariantStore :: Store -> M.Map Var (S.Set Exp)
 monovariantStore store = M.foldrWithKey (\(Binding x _) d res -> M.alter (\mb_exp -> Just $ maybe id S.union mb_exp (S.map monovariantValue d)) x res) M.empty store
 
