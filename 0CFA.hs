@@ -7,6 +7,7 @@ import Control.Monad
 
 import qualified Data.Map as M
 import qualified Data.Set as S
+import Data.List ((\\))
 
 import Debug.Trace
 
@@ -30,7 +31,7 @@ type Denotable = S.Set Value
 type Value = Clo
 -- Closures pair a lambda-term with a binding environment that determines
 -- the values of its free variables
-data Clo = Closure (Label, [Var], Call) BEnv | HaltClosure deriving (Eq, Ord, Show)
+data Clo = Closure (Label, [Var], Call) BEnv | HaltClosure | Arbitrary deriving (Eq, Ord, Show)
 -- Addresses can point to values in the store. In pure CPS, the only kind of addresses are bindings
 type Addr = Bind
 -- A binding is minted each time a variable gets bound to a value
@@ -59,26 +60,47 @@ tick l t = take k (l:t)
 atomEval :: BEnv -> Store -> Exp -> Denotable
 atomEval benv store Halt    = S.singleton HaltClosure
 atomEval benv store (Ref x) = case M.lookup x benv of
-    Nothing   -> error "Var unbound in BEnv"
+    Nothing   -> error $ "Variable unbound in BEnv: " ++ show x
     Just t -> case M.lookup (Binding x t) store of
-        Nothing -> error "Address unbound in Store"
+        Nothing -> error $ "Address unbound in Store: " ++ show (Binding x t)
         Just d  -> d
 atomEval benv _     (Lam l v c) = S.singleton (Closure (l, v, c) benv)
 
-next :: State -> S.Set State
+next :: State -> S.Set State -- Next states
 next s@(State (Call l fun args) benv store time)
-  = -- trace ("next" ++ show s) $
-    S.fromList [ State call' benv'' store' time'
+  = trace ("next" ++ show s) $
+    S.fromList [ state'
                | clo <- S.toList procs
-               , (formals, call', benv') <- case clo of
-                    Closure (_, formals, call') benv' -> [(formals, call', benv')]
-                    HaltClosure                       -> []
-               , let benv'' = foldr (\formal benv' -> M.insert formal time benv') benv' formals
-               , params <- S.toList (transpose paramss)
-               , let store' = foldr (\(formal, params) store  -> storeInsert (Binding formal time) params store) store (formals `zip` params)]
+               , state' <- case clo of
+                    HaltClosure -> []
+                    Closure (_, formals, call') benv'
+                      | let benv'' = foldr (\formal benv' -> M.insert formal time benv') benv' formals
+                      -> [ State call' benv'' store' time'
+                         | params <- S.toList (transpose paramss)
+                         , let store' = foldr (\(formal, params) store  -> storeInsert (Binding formal time) params store) store (formals `zip` params)
+                         ]
+                    Arbitrary
+                      -> [ state'
+                         | params <- S.toList (transpose paramss)
+                         , param <- params
+                         , Just state' <- [escape param store]
+                         ]
+               ]
   where time' = tick l time
         procs  = atomEval benv store fun
         paramss = map (atomEval benv store) args
+
+-- Extension of my own design to allow CFA in the presence of arbitrary values.
+-- Similar to "sub-0CFA" where locations are inferred to either have either a single
+-- lambda flow to them, no lambdas, or all lambdas
+escape :: Value -> Store -> Maybe State
+escape Arbitrary                          _     = Nothing -- If an arbitrary value from outside escapes we don't care
+escape HaltClosure                        _     = Nothing
+escape (Closure (_l, formals, call) benv) store = Just (State call (benv `M.union` benv') (store `storeJoin` store') [])
+  where (benv', store') = fvStuff formals
+
+fvStuff :: [Var] -> (BEnv, Store)
+fvStuff xs = (M.fromList [(x, []) | x <- xs], M.fromList [(Binding x [], S.singleton Arbitrary) | x <- xs])
 
 transpose :: Ord a => [S.Set a] -> S.Set [a]
 transpose []         = S.singleton []
@@ -110,9 +132,19 @@ monovariantStore store = M.foldrWithKey (\(Binding x _) d res -> M.alter (\mb_ex
 monovariantValue :: Value -> Exp
 monovariantValue (Closure (l, v, c) _) = Lam l v c
 monovariantValue HaltClosure           = Halt
+monovariantValue Arbitrary             = Ref "unknown"
 
 analyse :: Call -> M.Map Var (S.Set Exp)
-analyse e = monovariantStore (summarize (explore S.empty [State e M.empty M.empty []]))
+analyse e = monovariantStore (summarize (explore S.empty [State e benv store []]))
+  where (benv, store) = fvStuff (S.toList (fvsCall e))
+
+fvsCall :: Call -> S.Set Var
+fvsCall (Call _ fun args) = fvsExp fun `S.union` S.unions (map fvsExp args)
+
+fvsExp :: Exp -> S.Set Var
+fvsExp Halt         = S.empty
+fvsExp (Ref x)      = S.singleton x
+fvsExp (Lam _ xs c) = fvsCall c S.\\ S.fromList xs
 
 -- Helper functions for constructing syntax trees
 
@@ -155,7 +187,17 @@ standardExample =
                    lam ["a"] (call (ref "id") [lam ["y"] (halt (ref "y")),
                                                lam ["b"] (halt (ref "b"))])]
 
+-- Example with free varibles (showing escapes):
+fvExample :: UniqM Call
+fvExample = 
+  let_ "id" (lam ["x", "k"] (call (ref "k") [ref "x"])) $
+  call (ref "id") [lam ["z"] (call (ref "escape") [ref "z"]),
+                   lam ["a"] (call (ref "id") [lam ["y"] (call (ref "escape") [ref "y"]),
+                                               lam ["b"] (call (ref "escape") [ref "b"])])]
 
-main = forM_ (M.toList (analyse (runUniqM standardExample))) $ \(x, es) -> do
-    putStrLn (x ++ ":")
-    mapM_ (putStrLn . ("  " ++) . show) (S.toList es)
+
+main = forM_ [fvExample, standardExample] $ \example -> do
+         putStrLn "====="
+         forM_ (M.toList (analyse (runUniqM example))) $ \(x, es) -> do
+           putStrLn (x ++ ":")
+           mapM_ (putStrLn . ("  " ++) . show) (S.toList es)
