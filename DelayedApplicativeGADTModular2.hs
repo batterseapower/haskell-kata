@@ -51,7 +51,8 @@ instance Monad (DelayM q a) where
 delay :: q -> DelayM q a a
 delay q = Delayed (Leaf q) (\(Leaf a) -> pure a)
 
-runDelayM :: (Applicative memom, Monad memom,
+runDelayM :: forall memom q a r.
+             (Applicative memom, Monad memom,
               Show q) -- Debugging only
           => (DelayM q a r -> DelayM q a r) -- ^ Chooses the evaluation strategy
           -> (q -> memom (DelayM q a a))    -- ^ How to answer questions in the monad (possibly generating new requests in the process)
@@ -61,8 +62,17 @@ runDelayM choose_some sc = go
     go = go' . choose_some
     
     go' (Done x)       = pure x
-    go' (Delayed qs k) = -- trace ("iteration: " ++ show qs) $
-                         traverse sc qs >>= \fs -> go (sequenceA fs >>= k)
+    go' (Delayed (qs :: DelayStructure sh q) (k :: DelayStructure sh a -> DelayM q a r))
+        = -- trace ("iteration: " ++ show qs) $
+          mungeDS sc qs >>= \mx -> go (mx >>= k)
+
+
+mungeDS :: forall memom sh q a.
+           (Applicative memom, Monad memom)
+        => (q -> memom (DelayM q a a))
+        -> DelayStructure sh q
+        -> memom (DelayM q a (DelayStructure sh a))
+mungeDS sc qs = (traverse sc qs :: memom (DelayStructure sh (DelayM q a a))) >>= \fs -> return (sequenceA fs :: DelayM q a (DelayStructure sh a))
 
 
 depthFirst :: DelayM q a r -> DelayM q a r
@@ -70,8 +80,8 @@ depthFirst (Done x)       = Done x
 depthFirst (Delayed qs k) = delayTail qs >>= k
   where
     delayTail :: DelayStructure sh q -> DelayM q a (DelayStructure sh a)
-    delayTail (Leaf q)         = fmap Leaf (delay q)
-    delayTail (Branch qs1 qs2) = liftM2 Branch (delayTail qs1) (traverse delay qs2)
+    delayTail (Leaf q)                                   = fmap Leaf (delay q)
+    delayTail (Branch qs1 (qs2 :: DelayStructure sh2 q)) = liftM2 Branch (delayTail qs1) (traverse delay qs2 :: DelayM q a (DelayStructure sh2 a))
 
 breadthFirst :: DelayM q a r -> DelayM q a r
 breadthFirst = id
